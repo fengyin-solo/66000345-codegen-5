@@ -1,4 +1,5 @@
-import type { CognateSet, LanguageFamily } from '../types'
+import type { CognateSet, LanguageFamily, MissingInfo, WordDetail } from '../types'
+import { DETAIL_LANGUAGES, LANGUAGE_PERIODS, WORD_DETAILS, WORD_DETAILS_BY_FORM } from './wordDetails'
 
 export const LANGUAGE_FAMILIES: LanguageFamily[] = [
   { id: 'ie', name: '印欧语系', color: '#3b82f6', languages: ['英语','法语','德语','西班牙语','俄语','拉丁语'], era: '公元前4000年' },
@@ -34,9 +35,55 @@ export function buildGraph() {
     Object.entries(cs.languages).forEach(([lang, word]) => {
       if (!word || word === '-') return
       const nid = ci + '_' + lang
-      nodes.push({ id: nid, word, language: lang, meaning: cs.meaning, family: 'ie', era: '现代' })
+      nodes.push({ id: nid, word, language: lang, meaning: cs.meaning, family: 'ie', era: '现代', root: cs.root })
       links.push({ source: rootId, target: nid, type: 'derived' })
     })
   })
   return { nodes, links }
+}
+
+/**
+ * 解析任一现代词的词条详情。
+ * 优先返回人工整理的完整详情；未覆盖的词基于同源词组生成通用详情，
+ * 并明确标注来源链中断，保证任何现代词都有详情且不沿用其他词条的信息。
+ * 同一词形可能属于多个词根（如 eau），传入 root 可精确区分。
+ */
+export function getWordDetail(word: string, language: string, root?: string): WordDetail | null {
+  if (root) {
+    const curated = WORD_DETAILS[language + '::' + word + '::' + root]
+    if (curated) return curated
+  } else {
+    const byForm = WORD_DETAILS_BY_FORM[language + '::' + word]
+    if (byForm) return byForm
+  }
+  for (const cs of COGNATE_SETS) {
+    if (root && cs.root !== root) continue
+    if (cs.languages[language] !== word) continue
+    const cognates: Record<string, string | null> = {}
+    const missing: Record<string, MissingInfo> = {}
+    DETAIL_LANGUAGES.forEach(l => {
+      if (l === language) return
+      const w = cs.languages[l]
+      cognates[l] = w || null
+      if (!w) missing[l] = { category: 'not-attested', reason: '该语种的同源词形未收录于当前词库，暂缺。' }
+    })
+    return {
+      id: language + '::' + word + '::' + cs.root,
+      word,
+      language,
+      root: cs.root,
+      family: cs.family,
+      meaning: cs.meaning,
+      period: LANGUAGE_PERIODS[language] || '现代',
+      cognates,
+      missing,
+      sourcePath: [
+        { stage: cs.root, language: '原始印欧语（构拟）', period: cs.period, note: '共同词根' },
+        { stage: word, language, period: LANGUAGE_PERIODS[language] || '现代', note: '中间演化环节未收录' },
+      ],
+      sourceBroken: true,
+      sourceBreakNote: '该词的中间演化环节未收录于当前词库，来源路径不完整。',
+    }
+  }
+  return null
 }
